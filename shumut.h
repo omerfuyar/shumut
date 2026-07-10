@@ -53,31 +53,34 @@ SHUResult SHU_TaskYield(SHUTask task);
 #include <windows.h>
 typedef HANDLE SHUIThreadHandle;
 typedef SRWLOCK SHUILockHandle;
-typedef int SHUIContextHandle;
+typedef LPVOID SHUIContext;
 #else
 #include <pthread.h>
+#include <ucontext.h>
 typedef pthread_t SHUIThreadHandle;
 typedef pthread_mutex_t SHUILockHandle;
-typedef int SHUIContextHandle;
+typedef ucontext_t SHUIContext;
 #endif
 
 #pragma region Internals
 
-typedef enum SHUI_Signal
+typedef enum SHUISignal
 {
-    SHUI_Signal_Stop = 1 << 0,
-} SHUI_Signal;
+    SHUISignal_Stop = 1 << 0,
+} SHUISignal;
 
 typedef struct SHUI_Thread
 {
+    SHUIThreadHandle handle;
+    SHUIContext context;
     u8 signals;
     SHUTask headTask;
-    SHUIThreadHandle handle;
 } SHUI_Thread;
 
 typedef struct SHUI_Task
 {
     // header
+    SHUIContext context;
     u8 signals;
     SHUTask next;
     SHUExecutionFunction function;
@@ -100,6 +103,44 @@ typedef struct SHUI_Lock
 static _Thread_local SHUThread SHUI_CURRENT_THREAD = NULL;
 static _Thread_local SHUTask SHUI_CURRENT_TASK = NULL;
 
+static SHUIContext SHUI_GetCurrentContext(void)
+{
+#ifdef _WIN32
+    SHUIContext temp = GetCurrentFiber();
+    SHU_Assert(temp != NULL, "Getting thread context failed.");
+#else
+#endif
+}
+
+static void SHUI_JumpToContext(SHUIContext context)
+{
+#ifdef _WIN32
+    SwitchToFiber(context);
+#else
+#endif
+}
+
+/// parameter is the initialized SHUTask that will be started
+#ifdef _WIN32
+static VOID WINAPI SHUI_TaskFunctionWrap(LPVOID parameter)
+#else
+static void *SHUI_TaskFunctionWrap(void *parameter)
+#endif
+{
+    SHUTask task = (SHUTask)parameter;
+    task->returnValue = task->function(SHUI_CURRENT_THREAD, task, task->argument);
+    return 0;
+}
+
+static SHUIContext SHUI_CreateContext(SHUTask task)
+{
+#ifdef _WIN32
+    SHUIContext temp = CreateFiber(task->stackCapacity, SHUI_TaskFunctionWrap, task);
+    SHU_Assert(temp != NULL, "Creating thread context failed.");
+#else
+#endif
+}
+
 /// parameter is the initialized SHUThread that will be started
 #ifdef _WIN32
 static DWORD WINAPI SHUI_ThreadFunctionWrap(LPVOID parameter)
@@ -112,18 +153,21 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
     SHUI_CURRENT_THREAD = thread;
     SHUI_CURRENT_TASK = thread->headTask; // todo change on scheduler function
 
-    // todo scheduler check signals, yields etc.
-
-    thread->headTask->returnValue = thread->headTask->function(thread, thread->headTask, thread->headTask->argument);
-    return 0;
-}
-
 #ifdef _WIN32
-static DWORD WINAPI SHUI_TaskFunctionWrap(LPVOID parameter)
-#else
-static void *SHUI_TaskFunctionWrap(void *parameter)
+    thread->context = ConvertThreadToFiber(NULL);
+    if (thread->context == NULL)
+    {
+        return SHUResult_ErrInternal;
+    }
 #endif
-{
+
+    while (thread->signals == 0)
+    {
+        thread->context = SHUI_GetCurrentContext();
+        SHUI_CURRENT_TASK = SHUI_CURRENT_TASK->next;
+        SHUI_JumpToContext(SHUI_CURRENT_TASK->context);
+    }
+
     return 0;
 }
 
@@ -187,7 +231,7 @@ SHUResult SHU_ThreadDestroy(SHUThread thread)
         return SHUResult_ErrNullPointer;
     }
 
-    thread->signals = SHUI_Signal_Stop; // todo atomic
+    thread->signals = SHUISignal_Stop; // todo atomic
 
 #if defined(_WIN32)
     if (WaitForSingleObject(thread->handle, INFINITE) == WAIT_FAILED)
@@ -261,16 +305,23 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackCapacity, 
         return SHUResult_ErrNullPointer;
     }
 
-    SHUTask task = (SHUTask)malloc(sizeof(SHUI_Task) + stackCapacity);
+    usz tempStackCapacity = stackCapacity;
+#ifdef _WIN32
+    tempStackCapacity = 0;
+#endif
+
+    SHUTask task = (SHUTask)malloc(sizeof(SHUI_Task) + tempStackCapacity);
     if (task == NULL)
     {
         return SHUResult_ErrInternal;
     }
-    memset(task, 0x00, sizeof(SHUI_Task) + stackCapacity);
+    memset(task, 0x00, sizeof(SHUI_Task) + tempStackCapacity);
+
+    SHUResult result = 0;
 
     if (thread->headTask == NULL) // init
     {
-        SHUResult result = SHUI_SpawnThreadWithTask(thread, task);
+        result = SHUI_SpawnThreadWithTask(thread, task);
 
         if (result)
         {
@@ -296,9 +347,10 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackCapacity, 
     task->stackCapacity = stackCapacity;
     task->returnValue = cs0;
 
-    // todo proper scheduling
-
     *retTask = task;
+
+    task->context = SHUI_CreateContext(task);
+
     return SHUResult_Ok;
 }
 
@@ -310,11 +362,13 @@ SHUResult SHU_TaskDestroy(SHUTask task)
     }
     memset(task, 0x00, sizeof(SHUI_Task) + task->stackCapacity);
     free(task);
+    // todo fix links
 }
 
 SHUResult SHU_TaskYield(SHUTask task)
 {
-    // todo handle returning and yielding from tasks
+    task->context = SHUI_GetCurrentContext();
+    SHUI_JumpToContext(SHUI_CURRENT_THREAD->context);
 }
 
 #endif // SHU_IMPLEMENTATION
