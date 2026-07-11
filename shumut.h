@@ -17,10 +17,16 @@
 
 #pragma region Declarations
 
+/// @brief
 typedef struct SHUI_Thread *SHUThread;
+
+/// @brief
 typedef struct SHUI_Task *SHUTask;
+
+/// @brief
 typedef struct SHUI_Lock *SHULock;
 
+/// @brief
 typedef SHUSlice (*SHUExecutionFunction)(SHUThread thisThread, SHUTask thisTask, SHUSlice argument);
 
 SHUThread SHU_ThreadGetCurrent(void);
@@ -41,7 +47,13 @@ void SHU_TaskYield(SHUTask task);
 
 #define yield SHU_TaskYield(SHU_TaskGetCurrent())
 
-SHUResult SHU_LockCheck(SHULock lock);
+SHUResult SHU_LockCreate(SHULock *retLock);
+
+void SHU_LockDestroy(SHULock lock);
+
+bool SHU_LockTry(SHULock lock);
+
+void SHU_LockRelease(SHULock lock);
 
 #pragma endregion Declarations
 
@@ -53,14 +65,10 @@ SHUResult SHU_LockCheck(SHULock lock);
 
 #ifdef _WIN32
 #include <windows.h>
-typedef HANDLE SHUIThreadHandle;
-typedef SRWLOCK SHUILockHandle;
 typedef LPVOID SHUIContext;
 #else
 #include <pthread.h>
 #include <ucontext.h>
-typedef pthread_t SHUIThreadHandle;
-typedef pthread_mutex_t SHUILockHandle;
 typedef ucontext_t SHUIContext;
 #endif
 
@@ -73,7 +81,11 @@ typedef enum SHUISignal
 
 typedef struct SHUI_Thread
 {
-    SHUIThreadHandle handle;
+#ifdef _WIN32
+    HANDLE handle;
+#else
+    pthread_t handle;
+#endif
     SHUIContext context;
     u8 signals;
     SHUTask headTask;
@@ -94,12 +106,11 @@ typedef struct SHUI_Task
 
 typedef struct SHUI_Lock
 {
-    SHUILockHandle handle;
-    /*
-    this will be used for both threads and tasks as: so it will not block tasks individually, will yield to thread
-    while (SHU_LockCheck(...))
-    ...
-    */
+#ifdef _WIN32
+    CRITICAL_SECTION mutex;
+#else
+    pthread_mutex_t mutex;
+#endif
 } SHUI_Lock;
 
 static _Thread_local SHUThread SHUI_CURRENT_THREAD = NULL;
@@ -220,10 +231,7 @@ SHUThread SHU_ThreadGetCurrent(void)
 
 SHUResult SHU_ThreadCreate(SHUThread *retThread)
 {
-    if (retThread == NULL)
-    {
-        return SHUResult_ErrNullPointer;
-    }
+    SHU_CheckPanicNullPointer(retThread);
 
     SHUThread thread = (SHUThread)malloc(sizeof(SHUI_Thread));
     if (thread == NULL)
@@ -239,10 +247,7 @@ SHUResult SHU_ThreadCreate(SHUThread *retThread)
 
 SHUResult SHU_ThreadDestroy(SHUThread thread)
 {
-    if (thread == NULL)
-    {
-        return SHUResult_ErrNullPointer;
-    }
+    SHU_CheckPanicNullPointer(thread);
 
     thread->signals = SHUISignal_Stop; // todo atomic
 
@@ -261,7 +266,6 @@ SHUResult SHU_ThreadDestroy(SHUThread thread)
 #endif
 
     SHU_ThreadClear(thread);
-    memset(thread, 0x00, sizeof(SHUI_Thread));
     free(thread);
 
     return SHUResult_Ok;
@@ -342,9 +346,7 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUE
 void SHU_TaskDestroy(SHUTask task)
 {
     SHU_CheckPanicNullPointer(task);
-    memset(task, 0x00, sizeof(SHUI_Task) + task->stackSize);
     free(task);
-    // todo fix links
 }
 
 void SHU_TaskYield(SHUTask task)
@@ -353,8 +355,62 @@ void SHU_TaskYield(SHUTask task)
     SHUI_JumpToContext(&task->context, &SHUI_CURRENT_THREAD->context);
 }
 
-SHUResult SHU_LockCheck(SHULock lock)
+SHUResult SHU_LockCreate(SHULock *retLock)
 {
+    SHU_CheckPanicNullPointer(retLock);
+
+    SHULock lock = (SHULock)malloc(sizeof(SHUI_Lock));
+    if (lock == NULL)
+    {
+        return SHUResult_ErrAllocation;
+    }
+    memset(lock, 0x00, sizeof(SHUI_Lock));
+
+#ifdef _WIN32
+    InitializeCriticalSection(&lock->mutex);
+#else
+    pthread_mutex_init(&lock->mutex, NULL);
+#endif
+
+    *retLock = lock;
+
+    return SHUResult_Ok;
+}
+
+void SHU_LockDestroy(SHULock lock)
+{
+    SHU_CheckPanicNullPointer(lock);
+
+#ifdef _WIN32
+    DeleteCriticalSection(&lock->mutex);
+#else
+    pthread_mutex_destroy(&lock->mutex);
+#endif
+
+    free(lock);
+}
+
+bool SHU_LockTry(SHULock lock)
+{
+    SHU_CheckPanicNullPointer(lock);
+
+    // return 0 if entered cs
+#ifdef _WIN32
+    return !TryEnterCriticalSection(&lock->mutex);
+#else
+    return !pthread_mutex_trylock(&lock->mutex);
+#endif
+}
+
+void SHU_LockRelease(SHULock lock)
+{
+    SHU_CheckPanicNullPointer(lock);
+
+#ifdef _WIN32
+    LeaveCriticalSection(&lock->mutex);
+#else
+    pthread_mutex_unlock(&lock->mutex);
+#endif
 }
 
 #endif // SHU_IMPLEMENTATION
