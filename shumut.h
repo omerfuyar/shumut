@@ -462,7 +462,7 @@ bool SHU_LockTry(SHULock lock)
 #ifdef _WIN32
     return TryEnterCriticalSection(&lock->mutex);
 #else
-    return pthread_mutex_trylock(&lock->mutex);
+    return !pthread_mutex_trylock(&lock->mutex);
 #endif
 }
 
