@@ -105,10 +105,14 @@ static _Thread_local SHUTask SHUI_CURRENT_TASK = NULL;
 
 static SHUIContext SHUI_GetCurrentContext(void)
 {
+    SHUIContext temp = {0};
 #ifdef _WIN32
-    SHUIContext temp = GetCurrentFiber();
+    temp = GetCurrentFiber();
     SHU_Assert(temp != NULL, "Getting thread context failed.");
+    return temp;
 #else
+    SHU_Assert(!getcontext(&temp), "Getting thread context failed.");
+    return temp;
 #endif
 }
 
@@ -123,21 +127,33 @@ static void SHUI_JumpToContext(SHUIContext context)
 /// parameter is the initialized SHUTask that will be started
 #ifdef _WIN32
 static VOID WINAPI SHUI_TaskFunctionWrap(LPVOID parameter)
-#else
-static void *SHUI_TaskFunctionWrap(void *parameter)
-#endif
 {
     SHUTask task = (SHUTask)parameter;
+#else
+static void *SHUI_TaskFunctionWrap(int upper, int lower)
+{
+    uintptr_t ptr = ((uintptr_t)upper << (sizeof(int) * 8)) | (uintptr_t)(unsigned int)lower;
+    SHUTask task = (SHUTask)ptr;
+#endif
     task->returnValue = task->function(SHUI_CURRENT_THREAD, task, task->argument);
     return 0;
 }
 
 static SHUIContext SHUI_CreateContext(SHUTask task)
 {
+    SHUIContext temp = {0};
 #ifdef _WIN32
-    SHUIContext temp = CreateFiber(task->stackCapacity, SHUI_TaskFunctionWrap, task);
+    temp = CreateFiber(task->stackCapacity, SHUI_TaskFunctionWrap, task);
     SHU_Assert(temp != NULL, "Creating thread context failed.");
+    return temp;
 #else
+    uintptr_t ptr = (uintptr_t)task;
+
+    int upper = (int)(ptr >> (sizeof(int) * 8));
+    int lower = (int)(ptr & (uintptr_t)((int)0 - (int)1));
+
+    makecontext(&temp, (void (*)(void))SHUI_TaskFunctionWrap, 2, upper, lower);
+    return temp;
 #endif
 }
 
@@ -151,7 +167,7 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
     SHUThread thread = (SHUThread)parameter;
 
     SHUI_CURRENT_THREAD = thread;
-    SHUI_CURRENT_TASK = thread->headTask; // todo change on scheduler function
+    SHUI_CURRENT_TASK = thread->headTask;
 
 #ifdef _WIN32
     thread->context = ConvertThreadToFiber(NULL);
