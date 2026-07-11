@@ -10,49 +10,91 @@
 
 #pragma region Macros
 
-// #define SHUC_DEFAULT_THREAD_STACK_CAPACITY (2 * 1024 * 1024)
-#define SHUC_DEFAULT_TASK_STACK_CAPACITY (8 * 1024 * 1024)
+#define SHUC_DEFAULT_THREAD_STACK_CAPACITY (1024 * 1024)
+#define SHUC_DEFAULT_TASK_STACK_CAPACITY (128 * 1024)
 
 #pragma endregion Macros
 
 #pragma region Declarations
 
-/// @brief
+/// @brief Handle for thread objects to spawn tasks from.
 typedef struct SHUI_Thread *SHUThread;
 
-/// @brief
+/// @brief Handle for task objects to manage tasks.
 typedef struct SHUI_Task *SHUTask;
 
-/// @brief
+/// @brief Handle for lock objects across threads and tasks inside threads.
 typedef struct SHUI_Lock *SHULock;
 
-/// @brief
+/// @brief Function signature for creating new tasks.
 typedef SHUSlice (*SHUExecutionFunction)(SHUThread thisThread, SHUTask thisTask, SHUSlice argument);
 
+/// @brief Gets the currently running thread handle.
+/// @return Handle of currently running thread. NULL for the main thread.
 SHUThread SHU_ThreadGetCurrent(void);
 
+/// @brief Creates an OS thread which can spawn tasks.
+/// @param retThread Thread handle to use.
+/// @return ErrAllocation
 SHUResult SHU_ThreadCreate(SHUThread *retThread);
 
+/// @brief Destroys an OS thread together with its spawned tasks.
+/// @param thread Thread to destroy.
+/// @return ErrInternal
 SHUResult SHU_ThreadDestroy(SHUThread thread);
 
+/// @brief Destroys all of the spawned tasks of a thread.
+/// @param thread Thread to clear.
 void SHU_ThreadClear(SHUThread thread);
 
+/// @brief Gets the currently running task handle.
+/// @return Handle of currently running task. NULL for the main thread.
 SHUTask SHU_TaskGetCurrent(void);
 
-SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUExecutionFunction function, SHUSlice argument);
+/// @brief Creates a task belong to a thread created previously.
+/// @param retTask Task handle to use.
+/// @param thread Thread to spawn task from.
+/// @param stackSize Stack size of the created task.
+/// @param function Function to execute on task.
+/// @param argument Argument to pass to task function.
+/// @param retReturnAddress Return address of the task. Leave NULL if not needed.
+/// @return ErrAllocation / ErrInternal
+SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUExecutionFunction function, SHUSlice argument, SHUSlice *retReturnAddress);
 
+/// @brief Destroys a task and removes it from thread execution queue.
+/// @param task Task to destroy.
 void SHU_TaskDestroy(SHUTask task);
 
+/// @brief Yield a task to its thread, leaving its execution to another task.
+/// @param task Task to yield.
+/// @note Don't forget to call this function in a task function, otherwise one task will block all others in the same thread.
 void SHU_TaskYield(SHUTask task);
 
+/// @brief Yield the current task.
 #define yield SHU_TaskYield(SHU_TaskGetCurrent())
 
+/// @brief Creates a lock to use tasks across / inside threads.
+/// @param retLock Lock handle to use.
+/// @return ErrAllocation / SHUResult_ErrInternal
 SHUResult SHU_LockCreate(SHULock *retLock);
 
+/// @brief Destroys a lock.
+/// @param lock Lock to destroy.
 void SHU_LockDestroy(SHULock lock);
 
+/// @brief Checks and tries to acquire a lock.
+/// @param lock Lock to try acquire.
+/// @return True if lock is acquired, false if lock is already locked.
+/// @note This function is not blocking. Don't forget to yield if the lock is already locked in a task function. If you want a blocking option, see `SHU_LockWait`.
 bool SHU_LockTry(SHULock lock);
 
+/// @brief Checks and waits to acquire a lock.
+/// @param lock Lock to wait for acquiring.
+/// @note This function is blocking. So be aware that this function will block all other tasks running in its thread. If you want a non-blocking option, see `SHU_LockTry`.
+void SHU_LockWait(SHULock lock);
+
+/// @brief Unlocks a lock, leaving its ownership.
+/// @param lock Lock to release.
 void SHU_LockRelease(SHULock lock);
 
 #pragma endregion Declarations
@@ -76,7 +118,8 @@ typedef ucontext_t SHUIContext;
 
 typedef enum SHUISignal
 {
-    SHUISignal_Stop = 1 << 0,
+    SHUISignal_Stop,
+    SHUISignal_Finished,
 } SHUISignal;
 
 typedef struct SHUI_Thread
@@ -87,19 +130,20 @@ typedef struct SHUI_Thread
     pthread_t handle;
 #endif
     SHUIContext context;
-    u8 signals;
+    SHUISignal signals;
     SHUTask headTask;
+    SHUTask tailTask;
 } SHUI_Thread;
 
 typedef struct SHUI_Task
 {
     // header
     SHUIContext context;
-    u8 signals;
+    SHUISignal signals;
     SHUTask next;
     SHUExecutionFunction function;
     SHUSlice argument;
-    SHUSlice returnValue;
+    SHUSlice *returnAddress;
     usz stackSize;
     // stack
 } SHUI_Task;
@@ -116,24 +160,12 @@ typedef struct SHUI_Lock
 static _Thread_local SHUThread SHUI_CURRENT_THREAD = NULL;
 static _Thread_local SHUTask SHUI_CURRENT_TASK = NULL;
 
-/*
-static void SHUI_GetCurrentContext(SHUIContext *retContext)
-{
-#ifdef _WIN32
-    *retContext = GetCurrentFiber();
-    SHU_Assert(*retContext != NULL, "Getting thread context failed.");
-#else
-    SHU_Assert(!getcontext(retContext), "Getting thread context failed.");
-#endif
-}
-*/
-
 static void SHUI_JumpToContext(SHUIContext *fromContext, SHUIContext *toContext)
 {
 #ifdef _WIN32
     SwitchToFiber(*toContext);
 #else
-    swapcontext(fromContext, toContext);
+    SHU_Assert(!swapcontext(fromContext, toContext), "Swapping thread context failed.");
 #endif
 }
 
@@ -148,8 +180,13 @@ static void SHUI_TaskFunctionWrap(int upper, int lower)
     uintptr_t ptr = ((uintptr_t)upper << (sizeof(int) * 8)) | (uintptr_t)(unsigned int)lower;
     SHUTask task = (SHUTask)ptr;
 #endif
-    task->returnValue = task->function(SHUI_CURRENT_THREAD, task, task->argument);
-    task->signals = SHUISignal_Stop;
+    SHUSlice result = task->function(SHUI_CURRENT_THREAD, task, task->argument);
+    if (task->returnAddress != NULL)
+    {
+        *task->returnAddress = result;
+    }
+
+    task->signals = SHUISignal_Finished;
     SHUI_JumpToContext(&task->context, &SHUI_CURRENT_THREAD->context);
 }
 
@@ -159,7 +196,7 @@ static void SHUI_CreateContext(SHUIContext *retContext, SHUTask task)
     *retContext = CreateFiber(task->stackSize, SHUI_TaskFunctionWrap, task);
     SHU_Assert(*retContext != NULL, "Creating thread context failed.");
 #else
-    getcontext(retContext);
+    SHU_Assert(!getcontext(retContext), "Getting thread context failed.");
     (*retContext).uc_stack.ss_sp = (char *)task + sizeof(SHUI_Task); //! after the header
     (*retContext).uc_stack.ss_size = task->stackSize;
     (*retContext).uc_link = NULL;
@@ -190,8 +227,20 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
 
     while (thread->signals == 0)
     {
+        SHUTask nextTask = SHUI_CURRENT_TASK->next;
         SHUI_JumpToContext(&thread->context, &SHUI_CURRENT_TASK->context);
-        SHUI_CURRENT_TASK = SHUI_CURRENT_TASK->next;
+
+        switch (SHUI_CURRENT_TASK->signals)
+        { // todo signals, check for edge cases, like all tasks finishing, thread left empty etc. remove from list if stopped / finished.
+        case SHUISignal_Stop:
+            break;
+        case SHUISignal_Finished:
+            break;
+        default:
+            break;
+        }
+
+        SHUI_CURRENT_TASK = nextTask;
     }
 
     return 0;
@@ -203,20 +252,31 @@ static SHUResult SHUI_SpawnThreadWithTask(SHUThread thread, SHUTask task)
     SHU_CheckPanicNullPointer(task);
 
     thread->headTask = task;
-    task->next = thread->headTask;
+    thread->tailTask = task;
+    task->next = task;
 
 #ifdef _WIN32
-    thread->handle = CreateThread(NULL, 0, SHUI_ThreadFunctionWrap, thread, 0, NULL);
+    thread->handle = CreateThread(NULL, SHUC_DEFAULT_THREAD_STACK_CAPACITY, SHUI_ThreadFunctionWrap, thread, 0, NULL);
 
     if (thread->handle == NULL)
     {
         return SHUResult_ErrInternal;
     }
 #else
-    if (pthread_create(&thread->handle, NULL, SHUI_ThreadFunctionWrap, thread))
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+
+    if (pthread_attr_setstacksize(&attr, SHUC_DEFAULT_THREAD_STACK_CAPACITY))
     {
         return SHUResult_ErrInternal;
     }
+
+    if (pthread_create(&thread->handle, &attr, SHUI_ThreadFunctionWrap, thread))
+    {
+        return SHUResult_ErrInternal;
+    }
+
+    pthread_attr_destroy(&attr);
 #endif
 
     return SHUResult_Ok;
@@ -261,6 +321,11 @@ SHUResult SHU_ThreadDestroy(SHUThread thread)
     {
         return SHUResult_ErrInternal;
     }
+
+    if (!ConvertFiberToThread())
+    {
+        return SHUResult_ErrInternal;
+    }
 #else
     pthread_join(thread->handle, NULL);
 #endif
@@ -282,10 +347,11 @@ void SHU_ThreadClear(SHUThread thread)
 
         while (tempNext != thread->headTask)
         {
-            tempTask = tempNext;
             tempNext = tempTask->next;
 
             SHU_TaskDestroy(tempTask);
+
+            tempTask = tempNext;
         }
 
         SHU_TaskDestroy(thread->headTask);
@@ -297,7 +363,7 @@ SHUTask SHU_TaskGetCurrent(void)
     return SHUI_CURRENT_TASK;
 }
 
-SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUExecutionFunction function, SHUSlice argument)
+SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUExecutionFunction function, SHUSlice argument, SHUSlice *retReturnAddress)
 {
     SHU_CheckPanicNullPointer(retTask);
     SHU_CheckPanicNullPointer(thread);
@@ -320,7 +386,7 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUE
     task->argument = argument;
     task->function = function;
     task->stackSize = stackSize;
-    task->returnValue = cs0;
+    task->returnAddress = retReturnAddress;
     SHUI_CreateContext(&task->context, task);
 
     if (thread->headTask == NULL) // init
@@ -330,12 +396,7 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUE
     }
     else // append
     {
-        SHUTask tempTask = thread->headTask;
-        while (tempTask->next != thread->headTask)
-        {
-            tempTask = tempTask->next;
-        }
-        tempTask->next = task;
+        thread->tailTask = task;
         task->next = thread->headTask;
     }
 
@@ -347,6 +408,7 @@ void SHU_TaskDestroy(SHUTask task)
 {
     SHU_CheckPanicNullPointer(task);
     free(task);
+    // todo unlink
 }
 
 void SHU_TaskYield(SHUTask task)
@@ -369,7 +431,10 @@ SHUResult SHU_LockCreate(SHULock *retLock)
 #ifdef _WIN32
     InitializeCriticalSection(&lock->mutex);
 #else
-    pthread_mutex_init(&lock->mutex, NULL);
+    if (pthread_mutex_init(&lock->mutex, NULL))
+    {
+        return SHUResult_ErrInternal;
+    }
 #endif
 
     *retLock = lock;
@@ -394,11 +459,21 @@ bool SHU_LockTry(SHULock lock)
 {
     SHU_CheckPanicNullPointer(lock);
 
-    // return 0 if entered cs
 #ifdef _WIN32
-    return !TryEnterCriticalSection(&lock->mutex);
+    return TryEnterCriticalSection(&lock->mutex);
 #else
-    return !pthread_mutex_trylock(&lock->mutex);
+    return pthread_mutex_trylock(&lock->mutex);
+#endif
+}
+
+void SHU_LockWait(SHULock lock)
+{
+    SHU_CheckPanicNullPointer(lock);
+
+#ifdef _WIN32
+    EnterCriticalSection(&lock->mutex);
+#else
+    pthread_mutex_lock(&lock->mutex);
 #endif
 }
 
