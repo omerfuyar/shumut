@@ -157,8 +157,11 @@ typedef struct SHUI_Lock
 #endif
 } SHUI_Lock;
 
-static _Thread_local SHUThread SHUI_CURRENT_THREAD = NULL;
-static _Thread_local SHUTask SHUI_CURRENT_TASK = NULL;
+static _Thread_local struct
+{
+    SHUThread currentThread;
+    SHUTask currentTask;
+} SHUMUT = {0};
 
 static void SHUI_JumpToContext(SHUIContext *fromContext, SHUIContext *toContext)
 {
@@ -180,14 +183,14 @@ static void SHUI_TaskFunctionWrap(int upper, int lower)
     uintptr_t ptr = ((uintptr_t)upper << (sizeof(int) * 8)) | (uintptr_t)(unsigned int)lower;
     SHUTask task = (SHUTask)ptr;
 #endif
-    SHUSlice result = task->function(SHUI_CURRENT_THREAD, task, task->argument);
+    SHUSlice result = task->function(SHUMUT.currentThread, task, task->argument);
     if (task->returnAddress != NULL)
     {
         *task->returnAddress = result;
     }
 
     task->signals = SHUISignal_Finished;
-    SHUI_JumpToContext(&task->context, &SHUI_CURRENT_THREAD->context);
+    SHUI_JumpToContext(&task->context, &SHUMUT.currentThread->context);
 }
 
 static void SHUI_CreateContext(SHUIContext *retContext, SHUTask task)
@@ -217,8 +220,8 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
 {
     SHUThread thread = (SHUThread)parameter;
 
-    SHUI_CURRENT_THREAD = thread;
-    SHUI_CURRENT_TASK = thread->headTask;
+    SHUMUT.currentThread = thread;
+    SHUMUT.currentTask = thread->headTask;
 
 #ifdef _WIN32
     thread->context = ConvertThreadToFiber(NULL);
@@ -227,10 +230,10 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
 
     while (thread->signals == 0)
     {
-        SHUTask nextTask = SHUI_CURRENT_TASK->next;
-        SHUI_JumpToContext(&thread->context, &SHUI_CURRENT_TASK->context);
+        SHUTask nextTask = SHUMUT.currentTask->next;
+        SHUI_JumpToContext(&thread->context, &SHUMUT.currentTask->context);
 
-        switch (SHUI_CURRENT_TASK->signals)
+        switch (SHUMUT.currentTask->signals)
         { // todo signals, check for edge cases, like all tasks finishing, thread left empty etc. remove from list if stopped / finished.
         case SHUISignal_Stop:
             break;
@@ -240,7 +243,7 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
             break;
         }
 
-        SHUI_CURRENT_TASK = nextTask;
+        SHUMUT.currentTask = nextTask;
     }
 
     return 0;
@@ -286,7 +289,7 @@ static SHUResult SHUI_SpawnThreadWithTask(SHUThread thread, SHUTask task)
 
 SHUThread SHU_ThreadGetCurrent(void)
 {
-    return SHUI_CURRENT_THREAD;
+    return SHUMUT.currentThread;
 }
 
 SHUResult SHU_ThreadCreate(SHUThread *retThread)
@@ -360,7 +363,7 @@ void SHU_ThreadClear(SHUThread thread)
 
 SHUTask SHU_TaskGetCurrent(void)
 {
-    return SHUI_CURRENT_TASK;
+    return SHUMUT.currentTask;
 }
 
 SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUExecutionFunction function, SHUSlice argument, SHUSlice *retReturnAddress)
@@ -414,7 +417,7 @@ void SHU_TaskDestroy(SHUTask task)
 void SHU_TaskYield(SHUTask task)
 {
     SHU_CheckPanicNullPointer(task);
-    SHUI_JumpToContext(&task->context, &SHUI_CURRENT_THREAD->context);
+    SHUI_JumpToContext(&task->context, &SHUMUT.currentThread->context);
 }
 
 SHUResult SHU_LockCreate(SHULock *retLock)
