@@ -2,6 +2,7 @@
 *.exe
 *.old
 ignore*
+*.ignore
 *.pdb
 build/
 *.o

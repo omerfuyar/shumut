@@ -39,11 +39,11 @@ SHUThread SHU_ThreadGetCurrent(void);
 SHUResult SHU_ThreadCreate(SHUThread *retThread);
 
 /// @brief Destroys an OS thread together with its spawned tasks.
-/// @param thread Thread to destroy.
+/// @param thread Thread to abort.
 /// @return ErrInternal
 SHUResult SHU_ThreadDestroy(SHUThread thread);
 
-/// @brief Destroys all of the spawned tasks of a thread.
+/// @brief Destroys all of the spawned tasks of a thread without destroying the thread itself.
 /// @param thread Thread to clear.
 void SHU_ThreadClear(SHUThread thread);
 
@@ -109,6 +109,7 @@ void SHU_LockRelease(SHULock lock);
 #include <windows.h>
 typedef LPVOID SHUIContext;
 #else
+#include <unistd.h>
 #include <pthread.h>
 #include <ucontext.h>
 typedef ucontext_t SHUIContext;
@@ -119,7 +120,7 @@ typedef ucontext_t SHUIContext;
 typedef enum SHUISignal
 {
     SHUISignal_None = 0 << 0,
-    SHUISignal_Stop = 1 << 0,
+    SHUISignal_Destroyed = 1 << 0,
     SHUISignal_Finished = 1 << 1,
 } SHUISignal;
 
@@ -226,7 +227,10 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
 
 #ifdef _WIN32
     thread->context = ConvertThreadToFiber(NULL);
-    SHU_Assert(thread->context != NULL, "Converting thread to fiber failed.");
+    SHU_Assert(thread->context != NULL, "Setting up the thread %p failed.", thread->handle);
+#else
+    SHU_Assert(!(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) || pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL)),
+               "Setting up the thread %p failed.", thread->handle);
 #endif
 
     while (thread->signals == 0) // todo proper signals
@@ -235,7 +239,7 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
 
         switch (SHUMUT.currentTask->signals)
         { // todo signals, check for edge cases, like all tasks finishing, thread left empty etc. remove from list if stopped / finished.
-        case SHUISignal_Stop:
+        case SHUISignal_Destroyed:
         case SHUISignal_Finished:
             break;
         default:
@@ -254,6 +258,9 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
         break;
     }
 
+#ifdef _WIN32
+    SHU_Assert(ConvertFiberToThread(), "Cleaning up the thread %p failed.", thread->handle); // todo move to signals or something
+#endif
     return 0;
 }
 
@@ -320,9 +327,14 @@ SHUResult SHU_ThreadDestroy(SHUThread thread)
 {
     SHU_CheckPanicNullPointer(thread);
 
-    thread->signals = SHUISignal_Stop; // todo atomic
+    thread->signals = SHUISignal_Destroyed; // todo atomic?
 
 #if defined(_WIN32)
+    if (!TerminateThread(thread->handle, 0))
+    {
+        return SHUResult_ErrInternal;
+    }
+
     if (WaitForSingleObject(thread->handle, INFINITE) == WAIT_FAILED)
     {
         return SHUResult_ErrInternal;
@@ -332,13 +344,16 @@ SHUResult SHU_ThreadDestroy(SHUThread thread)
     {
         return SHUResult_ErrInternal;
     }
-
-    if (!ConvertFiberToThread())
+#else
+    if (pthread_cancel(thread->handle))
     {
         return SHUResult_ErrInternal;
     }
-#else
-    pthread_join(thread->handle, NULL);
+
+    if (pthread_join(thread->handle, NULL))
+    {
+        return SHUResult_ErrInternal;
+    }
 #endif
 
     SHU_ThreadClear(thread);
@@ -353,19 +368,16 @@ void SHU_ThreadClear(SHUThread thread)
 
     if (thread->headTask != NULL)
     {
-        SHUTask tempTask = thread->headTask;
-        SHUTask tempNext = tempTask->next;
-
-        while (tempNext != thread->headTask)
+        SHUTask current = thread->headTask;
+        do
         {
-            tempNext = tempTask->next;
+            SHUTask next = current->next;
+            SHU_TaskDestroy(current);
+            current = next;
+        } while (current != thread->headTask);
 
-            SHU_TaskDestroy(tempTask);
-
-            tempTask = tempNext;
-        }
-
-        SHU_TaskDestroy(thread->headTask);
+        thread->headTask = NULL;
+        thread->tailTask = NULL;
     }
 }
 
@@ -419,8 +431,11 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUE
 void SHU_TaskDestroy(SHUTask task)
 {
     SHU_CheckPanicNullPointer(task);
+#ifdef _WIN32
+    DeleteFiber(task->context);
+#endif
     free(task);
-    // todo unlink
+    // todo unlink?
 }
 
 void SHU_TaskYield(SHUTask task)
