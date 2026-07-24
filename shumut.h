@@ -118,8 +118,9 @@ typedef ucontext_t SHUIContext;
 
 typedef enum SHUISignal
 {
-    SHUISignal_Stop,
-    SHUISignal_Finished,
+    SHUISignal_None = 0 << 0,
+    SHUISignal_Stop = 1 << 0,
+    SHUISignal_Finished = 1 << 1,
 } SHUISignal;
 
 typedef struct SHUI_Thread
