@@ -14,7 +14,7 @@ SHUSlice test(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
     SHU_LogInfo("task function %zu executing", threadID);
     counter++;
     SHU_LockRelease(counterLock);
-    return cs((u8 *)threadNames[threadID % 4], threadID);
+    return cs(threadNames[threadID % 4], threadID);
 }
 
 int main(int argc, char **argv)
@@ -38,7 +38,7 @@ int main(int argc, char **argv)
 
     for (usz i = 0; i < THREAD_COUNT; i++)
     {
-        SHU_LogInfo("return value for thread %zu : %s", returnValues[i].size, returnValues[i].data);
+        SHU_LogInfo("return value for thread %zu : %s", returnValues[i].size, (char *)returnValues[i].data);
     }
 
     return 0;

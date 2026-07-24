@@ -228,22 +228,29 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
     SHU_Assert(thread->context != NULL, "Converting thread to fiber failed.");
 #endif
 
-    while (thread->signals == 0)
+    while (thread->signals == 0) // todo proper signals
     {
-        SHUTask nextTask = SHUMUT.currentTask->next;
-        SHUI_JumpToContext(&thread->context, &SHUMUT.currentTask->context);
+        // SHUI_JumpToContext(&thread->context, &SHUMUT.currentTask->context);
 
         switch (SHUMUT.currentTask->signals)
         { // todo signals, check for edge cases, like all tasks finishing, thread left empty etc. remove from list if stopped / finished.
         case SHUISignal_Stop:
-            break;
         case SHUISignal_Finished:
             break;
         default:
+            SHUI_JumpToContext(&thread->context, &SHUMUT.currentTask->context);
             break;
         }
 
-        SHUMUT.currentTask = nextTask;
+        // todo thread with one finished/stopped task spins forever
+
+        SHUMUT.currentTask = SHUMUT.currentTask->next;
+    }
+
+    switch (thread->signals)
+    {
+    default:
+        break;
     }
 
     return 0;
@@ -399,8 +406,9 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUE
     }
     else // append
     {
-        thread->tailTask = task;
+        thread->tailTask->next = task;
         task->next = thread->headTask;
+        thread->tailTask = task;
     }
 
     *retTask = task;
