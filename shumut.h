@@ -62,8 +62,9 @@ SHUTask SHU_TaskGetCurrent(void);
 SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUExecutionFunction function, SHUSlice argument, SHUSlice *retReturnAddress);
 
 /// @brief Destroys a task and removes it from thread execution queue.
+/// @param thread Thread to destroy it from.
 /// @param task Task to destroy.
-void SHU_TaskDestroy(SHUTask task);
+void SHU_TaskDestroy(SHUThread thread, SHUTask task);
 
 /// @brief Yield a task to its thread, leaving its execution to another task.
 /// @param task Task to yield.
@@ -104,6 +105,7 @@ void SHU_LockRelease(SHULock lock);
 #ifdef SHU_IMPLEMENTATION
 
 #include <string.h>
+#include <stdatomic.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -132,7 +134,7 @@ typedef struct SHUI_Thread
     pthread_t handle;
 #endif
     SHUIContext context;
-    SHUISignal signals;
+    _Atomic SHUISignal signals;
     SHUTask headTask;
     SHUTask tailTask;
 } SHUI_Thread;
@@ -141,8 +143,9 @@ typedef struct SHUI_Task
 {
     // header
     SHUIContext context;
-    SHUISignal signals;
+    _Atomic SHUISignal signals;
     SHUTask next;
+    SHUTask previous;
     SHUExecutionFunction function;
     SHUSlice argument;
     SHUSlice *returnAddress;
@@ -174,6 +177,34 @@ static void SHUI_JumpToContext(SHUIContext *fromContext, SHUIContext *toContext)
 #endif
 }
 
+static void SHUI_TaskUnlink(SHUThread thread, SHUTask task)
+{
+    if (task->next == task)
+    {
+        thread->headTask = NULL;
+        thread->tailTask = NULL;
+        return;
+    }
+
+    task->previous->next = task->next;
+    task->next->previous = task->previous;
+
+    if (thread->headTask == task)
+    {
+        thread->headTask = task->next;
+    }
+
+    if (thread->tailTask == task)
+    {
+        thread->tailTask = task->previous;
+    }
+
+    if (SHUMUT.currentTask == task)
+    {
+        SHUMUT.currentTask = task->next;
+    }
+}
+
 /// parameter is the initialized SHUTask that will be started
 #ifdef _WIN32
 static VOID WINAPI SHUI_TaskFunctionWrap(LPVOID parameter)
@@ -191,7 +222,7 @@ static void SHUI_TaskFunctionWrap(int upper, int lower)
         *task->returnAddress = result;
     }
 
-    task->signals = SHUISignal_Finished;
+    atomic_store_explicit(&task->signals, SHUISignal_Finished, memory_order_release);
     SHUI_JumpToContext(&task->context, &SHUMUT.currentThread->context);
 }
 
@@ -202,9 +233,12 @@ static void SHUI_CreateContext(SHUIContext *retContext, SHUTask task)
     SHU_Assert(*retContext != NULL, "Creating thread context failed.");
 #else
     SHU_Assert(!getcontext(retContext), "Getting thread context failed.");
-    (*retContext).uc_stack.ss_sp = (char *)task + sizeof(SHUI_Task); //! after the header
-    (*retContext).uc_stack.ss_size = task->stackSize;
-    (*retContext).uc_link = NULL;
+    uintptr_t rawBase = (uintptr_t)task + sizeof(SHUI_Task);
+    uintptr_t alignedBase = (rawBase + 15) & ~(uintptr_t)15;
+    usz padding = alignedBase - rawBase;
+
+    (*retContext).uc_stack.ss_sp = (char *)alignedBase;
+    (*retContext).uc_stack.ss_size = task->stackSize - padding;
 
     uintptr_t ptr = (uintptr_t)task;
     int upper = (int)(ptr >> (sizeof(int) * 8));
@@ -233,23 +267,26 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
                "Setting up the thread %p failed.", thread->handle);
 #endif
 
-    while (thread->signals == 0) // todo proper signals
+    while (atomic_load_explicit(&thread->signals, memory_order_acquire) == SHUISignal_None) // todo proper signals
     {
-        // SHUI_JumpToContext(&thread->context, &SHUMUT.currentTask->context);
+        SHUTask next = SHUMUT.currentTask->next;
 
-        switch (SHUMUT.currentTask->signals)
-        { // todo signals, check for edge cases, like all tasks finishing, thread left empty etc. remove from list if stopped / finished.
+        switch (atomic_load_explicit(&SHUMUT.currentTask->signals, memory_order_acquire))
+        {
         case SHUISignal_Destroyed:
         case SHUISignal_Finished:
+            SHUI_TaskUnlink(thread, SHUMUT.currentTask);
+#ifdef _WIN32
+            DeleteFiber(SHUMUT.currentTask->context);
+#endif
+            free(SHUMUT.currentTask);
             break;
         default:
             SHUI_JumpToContext(&thread->context, &SHUMUT.currentTask->context);
             break;
         }
 
-        // todo thread with one finished/stopped task spins forever
-
-        SHUMUT.currentTask = SHUMUT.currentTask->next;
+        SHUMUT.currentTask = (thread->headTask != NULL) ? next : NULL;
     }
 
     switch (thread->signals)
@@ -266,12 +303,10 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
 
 static SHUResult SHUI_SpawnThreadWithTask(SHUThread thread, SHUTask task)
 {
-    SHU_CheckPanicNullPointer(thread);
-    SHU_CheckPanicNullPointer(task);
-
     thread->headTask = task;
     thread->tailTask = task;
     task->next = task;
+    task->previous = task;
 
 #ifdef _WIN32
     thread->handle = CreateThread(NULL, SHUC_DEFAULT_THREAD_STACK_CAPACITY, SHUI_ThreadFunctionWrap, thread, 0, NULL);
@@ -327,7 +362,7 @@ SHUResult SHU_ThreadDestroy(SHUThread thread)
 {
     SHU_CheckPanicNullPointer(thread);
 
-    thread->signals = SHUISignal_Destroyed; // todo atomic?
+    atomic_store_explicit(&thread->signals, SHUISignal_Destroyed, memory_order_release);
 
 #if defined(_WIN32)
     if (!TerminateThread(thread->handle, 0))
@@ -366,18 +401,9 @@ void SHU_ThreadClear(SHUThread thread)
 {
     SHU_CheckPanicNullPointer(thread);
 
-    if (thread->headTask != NULL)
+    while (thread->headTask != NULL)
     {
-        SHUTask current = thread->headTask;
-        do
-        {
-            SHUTask next = current->next;
-            SHU_TaskDestroy(current);
-            current = next;
-        } while (current != thread->headTask);
-
-        thread->headTask = NULL;
-        thread->tailTask = NULL;
+        SHU_TaskDestroy(thread, thread->headTask);
     }
 }
 
@@ -399,7 +425,7 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUE
     tempStackSize = 0;
 #endif
 
-    SHUTask task = (SHUTask)malloc(sizeof(SHUI_Task) + tempStackSize);
+    SHUTask task = (SHUTask)malloc(sizeof(SHUI_Task) + tempStackSize + 16);
     if (task == NULL)
     {
         return SHUResult_ErrAllocation;
@@ -414,13 +440,22 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUE
 
     if (thread->headTask == NULL) // init
     {
-        SHU_CheckReturn(SHUI_SpawnThreadWithTask(thread, task),
-                        free(task););
+        SHUResult result = SHUI_SpawnThreadWithTask(thread, task);
+        if (result != SHUResult_Ok)
+        {
+#ifdef _WIN32
+            DeleteFiber(task->context);
+#endif
+            free(task);
+            return result;
+        }
     }
     else // append
     {
-        thread->tailTask->next = task;
+        task->previous = thread->tailTask;
         task->next = thread->headTask;
+        thread->tailTask->next = task;
+        thread->headTask->previous = task;
         thread->tailTask = task;
     }
 
@@ -428,14 +463,15 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUE
     return SHUResult_Ok;
 }
 
-void SHU_TaskDestroy(SHUTask task)
+void SHU_TaskDestroy(SHUThread thread, SHUTask task)
 {
     SHU_CheckPanicNullPointer(task);
+
+    SHUI_TaskUnlink(thread, task);
 #ifdef _WIN32
     DeleteFiber(task->context);
 #endif
     free(task);
-    // todo unlink?
 }
 
 void SHU_TaskYield(SHUTask task)
