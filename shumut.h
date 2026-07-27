@@ -132,6 +132,8 @@ usz SHU_AtomicSum(_Atomic usz *atomicVariable, usz sumValue);
 
 #include <string.h>
 #include <stdatomic.h>
+#include <time.h>
+#include <errno.h>
 
 #ifdef _WIN32
 #include <windows.h>
