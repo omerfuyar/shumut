@@ -3,7 +3,7 @@
 
 #define COUNTER_INTERVAL 1000
 
-bool working = false;
+_Atomic usz working = 0;
 
 SHUSlice test(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 {
@@ -14,7 +14,7 @@ SHUSlice test(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 
         if (counter == (COUNTER_INTERVAL * 2))
         {
-            working = true;
+            SHU_AtomicWrite(&working, 1);
         }
 
         if ((counter % COUNTER_INTERVAL) == 0)
@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     SHU_CheckPanic(SHU_ThreadCreate(&thread));
     SHU_CheckPanic(SHU_TaskCreate(&task, thread, 0, test, cs0, &ret));
 
-    while (!working)
+    while (SHU_AtomicRead(&working) == 0)
     {
     }
 

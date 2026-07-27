@@ -43,6 +43,11 @@ SHUResult SHU_ThreadCreate(SHUThread *retThread);
 /// @return ErrInternal
 SHUResult SHU_ThreadDestroy(SHUThread thread);
 
+/// @brief Puts the current thread to sleep for specified time.
+/// @param thread Thread to sleep.
+/// @param milliseconds Milliseconds to sleep for.
+void SHU_ThreadSleep(u64 milliseconds);
+
 /// @brief Destroys all of the spawned tasks of a thread without destroying the thread itself.
 /// @param thread Thread to clear.
 void SHU_ThreadClear(SHUThread thread);
@@ -399,6 +404,21 @@ SHUResult SHU_ThreadCreate(SHUThread *retThread)
     *retThread = thread;
 
     return SHUResult_Ok;
+}
+
+void SHU_ThreadSleep(u64 milliseconds)
+{
+#ifdef _WIN32
+    Sleep((DWORD)milliseconds);
+#else
+    struct timespec ts;
+    ts.tv_sec = (time_t)(milliseconds / 1000);
+    ts.tv_nsec = (long)((milliseconds % 1000) * 1000000);
+
+    while (nanosleep(&ts, &ts) == -1 && errno == EINTR)
+    {
+    }
+#endif
 }
 
 SHUResult SHU_ThreadDestroy(SHUThread thread)

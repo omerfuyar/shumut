@@ -33,6 +33,8 @@ int main(int argc, char **argv)
     {
     }
 
+    SHU_ThreadSleep(100); // to return from task function
+
     SHU_LogInfo("main thread exiting, counter : %zu", counter);
 
     for (usz i = 0; i < THREAD_COUNT; i++)
