@@ -7,7 +7,7 @@ SHUSlice test(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 {
     SHU_LogInfo("task function executing");
     SHU_AtomicWrite(&done, 1);
-    return cs((u8 *)0xDEAD, 31);
+    return cs((void *)0xDEAD, 31);
 }
 
 int main(int argc, char **argv)

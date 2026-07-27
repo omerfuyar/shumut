@@ -4,15 +4,21 @@
 #include "../../shuild/shuild.h"
 
 #ifdef _WIN32
-#define LINUX_SUFFIX
+#define LINUX_SUFFIX ""
 #else
 #define LINUX_SUFFIX ".ignore"
 #endif
 
 void ShuildExample(const char *name)
 {
-    SHU_ModuleBegin(name LINUX_SUFFIX, NULL);
-    SHU_ModuleAddSourceFile(name);
+    char buffer[64] = {0};
+
+    snprintf(buffer, sizeof(buffer), "%s%s", name, LINUX_SUFFIX);
+    SHU_ModuleBegin(buffer, NULL);
+
+    snprintf(buffer, sizeof(buffer), "%s.c", name);
+    SHU_ModuleAddSourceFile(buffer);
+
     SHU_ModuleCompile(NULL, SHUModuleType_Executable);
 }
 

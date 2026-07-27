@@ -191,6 +191,17 @@ static _Thread_local struct
     SHUTask currentTask;
 } SHUMUT = {0};
 
+static u64 SHUI_GetMilliseconds(void)
+{
+#ifdef _WIN32
+    return (u64)GetTickCount64();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (u64)ts.tv_sec * 1000ULL + (u64)(ts.tv_nsec / 1000000);
+#endif
+}
+
 static void SHUI_JumpToContext(SHUIContext *fromContext, SHUIContext *toContext)
 {
 #ifdef _WIN32
@@ -245,7 +256,7 @@ static void SHUI_TaskFunctionWrap(int upper, int lower)
         *task->returnAddress = result;
     }
 
-    SHU_AtomicWrite(&task->signals, SHUISignal_Finished);
+    SHU_AtomicWrite((_Atomic usz *)&task->signals, SHUISignal_Finished);
     SHUI_JumpToContext(&task->context, &SHUMUT.currentThread->context);
 }
 
@@ -290,11 +301,11 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
                "Setting up the thread %p failed.", thread->handle);
 #endif
 
-    while (SHU_AtomicRead(&thread->signals) == SHUISignal_None)
+    while (SHU_AtomicRead((_Atomic usz *)&thread->signals) == SHUISignal_None)
     {
         SHUTask next = SHUMUT.currentTask->next;
 
-        switch (SHU_AtomicRead(&SHUMUT.currentTask->signals))
+        switch (SHU_AtomicRead((_Atomic usz *)&SHUMUT.currentTask->signals))
         {
         case SHUISignal_Destroyed:
         case SHUISignal_Finished:
@@ -365,17 +376,6 @@ static SHUResult SHUI_SpawnThreadWithTask(SHUThread thread, SHUTask task)
 #endif
 
     return SHUResult_Ok;
-}
-
-static u64 SHUI_GetMilliseconds(void)
-{
-#ifdef _WIN32
-    return (u64)GetTickCount64();
-#else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (u64)ts.tv_sec * 1000ULL + (u64)(ts.tv_nsec / 1000000);
-#endif
 }
 
 #pragma endregion Internals
