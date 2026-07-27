@@ -3,24 +3,19 @@
 
 #define THREAD_COUNT 4
 
-usz counter = 0;
-SHULock counterLock;
+_Atomic usz counter = 0;
 const char *const threadNames[] = {"Abu Bakr", "Umar", "Uthman", "Ali"};
 
 SHUSlice test(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 {
     usz threadID = argument.size;
-    SHU_LockWait(counterLock);
     SHU_LogInfo("task function %zu executing", threadID);
-    counter++;
-    SHU_LockRelease(counterLock);
+    SHU_AtomicSum(&counter, 1);
     return cs(threadNames[threadID % 4], threadID);
 }
 
 int main(int argc, char **argv)
 {
-    SHU_CheckPanic(SHU_LockCreate(&counterLock));
-
     SHUThread threads[THREAD_COUNT];
     SHUTask tasks[THREAD_COUNT];
     SHUSlice returnValues[THREAD_COUNT];
@@ -33,7 +28,11 @@ int main(int argc, char **argv)
     }
 
     SHU_LogInfo("main thread waiting");
-    SHU_LockWait(counterLock);
+
+    while (SHU_AtomicRead(&counter) != THREAD_COUNT)
+    {
+    }
+
     SHU_LogInfo("main thread exiting, counter : %zu", counter);
 
     for (usz i = 0; i < THREAD_COUNT; i++)

@@ -68,11 +68,16 @@ void SHU_TaskDestroy(SHUThread thread, SHUTask task);
 
 /// @brief Yield a task to its thread, leaving its execution to another task.
 /// @param task Task to yield.
+/// @param milliseconds Milliseconds to yield for. Pass 0 for instant queue.
 /// @note Don't forget to call this function in a task function, otherwise one task will block all others in the same thread.
-void SHU_TaskYield(SHUTask task);
+void SHU_TaskYield(SHUTask task, u64 milliseconds);
 
 /// @brief Yield the current task.
-#define yield SHU_TaskYield(SHU_TaskGetCurrent())
+#define yield SHU_TaskYield(SHU_TaskGetCurrent(), 0)
+
+/// @brief Yield the current task for milliseconds.
+/// @param milliseconds Milliseconds to delay this task.
+#define yieldMilliseconds(milliseconds) SHU_TaskYield(SHU_TaskGetCurrent(), milliseconds)
 
 /// @brief Creates a lock to use tasks across / inside threads.
 /// @param retLock Lock handle to use.
@@ -97,6 +102,22 @@ void SHU_LockWait(SHULock lock);
 /// @brief Unlocks a lock, leaving its ownership.
 /// @param lock Lock to release.
 void SHU_LockRelease(SHULock lock);
+
+/// @brief Atomic read operation. Use only with `usz` type.
+/// @param atomicVariable Variable to read atomically.
+/// @return The ridden value from atomic address.
+usz SHU_AtomicRead(_Atomic usz *atomicVariable);
+
+/// @brief Atomic write operation. Use only with `usz` type.
+/// @param atomicVariable Variable to write atomically.
+/// @param sourceVariable Value to write to variable.
+void SHU_AtomicWrite(_Atomic usz *atomicVariable, usz writeValue);
+
+/// @brief Atomic sum operation. Use only with `usz` type.
+/// @param atomicVariable Variable to sum atomically.
+/// @param valueToSum Value to sum to variable.
+/// @return The old value before summation operation
+usz SHU_AtomicSum(_Atomic usz *atomicVariable, usz sumValue);
 
 #pragma endregion Declarations
 
@@ -124,6 +145,7 @@ typedef enum SHUISignal
     SHUISignal_None = 0 << 0,
     SHUISignal_Destroyed = 1 << 0,
     SHUISignal_Finished = 1 << 1,
+    SHUISignal_Sleeping = 1 << 2,
 } SHUISignal;
 
 typedef struct SHUI_Thread
@@ -150,6 +172,7 @@ typedef struct SHUI_Task
     SHUSlice argument;
     SHUSlice *returnAddress;
     usz stackSize;
+    u64 wakeAt;
     // stack
 } SHUI_Task;
 
@@ -222,7 +245,7 @@ static void SHUI_TaskFunctionWrap(int upper, int lower)
         *task->returnAddress = result;
     }
 
-    atomic_store_explicit(&task->signals, SHUISignal_Finished, memory_order_release);
+    SHU_AtomicWrite(&task->signals, SHUISignal_Finished);
     SHUI_JumpToContext(&task->context, &SHUMUT.currentThread->context);
 }
 
@@ -267,11 +290,11 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
                "Setting up the thread %p failed.", thread->handle);
 #endif
 
-    while (atomic_load_explicit(&thread->signals, memory_order_acquire) == SHUISignal_None) // todo proper signals
+    while (SHU_AtomicRead(&thread->signals) == SHUISignal_None)
     {
         SHUTask next = SHUMUT.currentTask->next;
 
-        switch (atomic_load_explicit(&SHUMUT.currentTask->signals, memory_order_acquire))
+        switch (SHU_AtomicRead(&SHUMUT.currentTask->signals))
         {
         case SHUISignal_Destroyed:
         case SHUISignal_Finished:
@@ -281,7 +304,16 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
 #endif
             free(SHUMUT.currentTask);
             break;
+        case SHUISignal_Sleeping:
+            if (SHUMUT.currentTask->wakeAt != 0 &&
+                SHUI_GetMilliseconds() < SHUMUT.currentTask->wakeAt)
+            {
+                break;
+            }
+            SHUMUT.currentTask->wakeAt = 0;
+            SHUMUT.currentTask->signals = SHUISignal_None;
         default:
+
             SHUI_JumpToContext(&thread->context, &SHUMUT.currentTask->context);
             break;
         }
@@ -335,6 +367,17 @@ static SHUResult SHUI_SpawnThreadWithTask(SHUThread thread, SHUTask task)
     return SHUResult_Ok;
 }
 
+static u64 SHUI_GetMilliseconds(void)
+{
+#ifdef _WIN32
+    return (u64)GetTickCount64();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (u64)ts.tv_sec * 1000ULL + (u64)(ts.tv_nsec / 1000000);
+#endif
+}
+
 #pragma endregion Internals
 
 SHUThread SHU_ThreadGetCurrent(void)
@@ -364,7 +407,7 @@ SHUResult SHU_ThreadDestroy(SHUThread thread)
 
     atomic_store_explicit(&thread->signals, SHUISignal_Destroyed, memory_order_release);
 
-#if defined(_WIN32)
+#ifdef _WIN32
     if (!TerminateThread(thread->handle, 0))
     {
         return SHUResult_ErrInternal;
@@ -474,9 +517,20 @@ void SHU_TaskDestroy(SHUThread thread, SHUTask task)
     free(task);
 }
 
-void SHU_TaskYield(SHUTask task)
+void SHU_TaskYield(SHUTask task, u64 milliseconds)
 {
     SHU_CheckPanicNullPointer(task);
+
+    if (milliseconds > 0)
+    {
+        task->wakeAt = SHUI_GetMilliseconds() + (u64)milliseconds;
+        task->signals = SHUISignal_Sleeping;
+    }
+    else
+    {
+        task->wakeAt = 0;
+    }
+
     SHUI_JumpToContext(&task->context, &SHUMUT.currentThread->context);
 }
 
@@ -549,6 +603,28 @@ void SHU_LockRelease(SHULock lock)
 #else
     pthread_mutex_unlock(&lock->mutex);
 #endif
+}
+
+usz SHU_AtomicRead(_Atomic usz *atomicVariable)
+{
+    return atomic_load_explicit(atomicVariable, memory_order_acquire);
+}
+
+void SHU_AtomicWrite(_Atomic usz *atomicVariable, usz writeValue)
+{
+    atomic_store_explicit(atomicVariable, writeValue, memory_order_release);
+}
+
+usz SHU_AtomicSum(_Atomic usz *atomicVariable, usz sumValue)
+{
+    if (sumValue == 0)
+    {
+        return SHU_AtomicRead(atomicVariable);
+    }
+
+    return sumValue > 0
+               ? atomic_fetch_add_explicit(atomicVariable, sumValue, memory_order_acq_rel)
+               : atomic_fetch_sub_explicit(atomicVariable, sumValue, memory_order_acq_rel);
 }
 
 #endif // SHU_IMPLEMENTATION
