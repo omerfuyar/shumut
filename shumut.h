@@ -220,6 +220,11 @@ static void SHUI_JumpToContext(SHUIContext *fromContext, SHUIContext *toContext)
 
 static void SHUI_TaskUnlink(SHUThread thread, SHUTask task)
 {
+    if (SHUMUT.currentTask == task)
+    {
+        SHUMUT.currentTask = (task->next != task) ? task->next : NULL;
+    }
+
     if (task->next == task)
     {
         thread->headTask = NULL;
@@ -238,11 +243,6 @@ static void SHUI_TaskUnlink(SHUThread thread, SHUTask task)
     if (thread->tailTask == task)
     {
         thread->tailTask = task->previous;
-    }
-
-    if (SHUMUT.currentTask == task)
-    {
-        SHUMUT.currentTask = task->next;
     }
 }
 
@@ -310,6 +310,15 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
 
     while (SHU_AtomicRead((_Atomic usz *)&thread->signals) == SHUISignal_None)
     {
+        if (SHUMUT.currentTask == NULL)
+        {
+            if (thread->headTask == NULL)
+            {
+                continue; // no tasks left; wait for one to be appended
+            }
+            SHUMUT.currentTask = thread->headTask;
+        }
+
         SHUTask next = SHUMUT.currentTask->next;
 
         switch (SHU_AtomicRead((_Atomic usz *)&SHUMUT.currentTask->signals))
