@@ -43,7 +43,7 @@ int main(int argc, char **argv)
 
     SHU_LogInfo("Worker thread created, now destroying it");
 
-    SHU_CheckPanic(SHU_ThreadDestroy(thread));
+    SHU_TaskDestroy(thread, task);
 
     SHU_LogInfo("Main thread exited");
 
