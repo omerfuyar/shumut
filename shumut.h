@@ -441,7 +441,7 @@ SHUResult SHU_ThreadDestroy(SHUThread thread)
 {
     SHU_CheckPanicNullPointer(thread);
 
-    atomic_store_explicit(&thread->signals, SHUISignal_Destroyed, memory_order_release);
+    SHU_AtomicWrite((_Atomic usz *)&thread->signals, SHUISignal_Destroyed);
 
 #ifdef _WIN32
     if (!TerminateThread(thread->handle, 0))
