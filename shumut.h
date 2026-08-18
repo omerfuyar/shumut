@@ -122,7 +122,7 @@ void SHU_AtomicWrite(_Atomic usz *atomicVariable, usz writeValue);
 /// @param atomicVariable Variable to sum atomically.
 /// @param valueToSum Value to sum to variable.
 /// @return The old value before summation operation
-usz SHU_AtomicAdd(_Atomic usz *atomicVariable, usz sumValue);
+usz SHU_AtomicSum(_Atomic usz *atomicVariable, usz sumValue);
 
 #pragma endregion Declarations
 
@@ -653,7 +653,7 @@ void SHU_AtomicWrite(_Atomic usz *atomicVariable, usz writeValue)
     atomic_store_explicit(atomicVariable, writeValue, memory_order_release);
 }
 
-usz SHU_AtomicAdd(_Atomic usz *atomicVariable, usz sumValue)
+usz SHU_AtomicSum(_Atomic usz *atomicVariable, usz sumValue)
 {
     if (sumValue == 0)
     {
