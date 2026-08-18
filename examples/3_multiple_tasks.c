@@ -2,16 +2,18 @@
 #include "../shumut.h"
 
 #define COUNTER_LIMIT 31
-usz counter = 0;
+_Atomic usz counter = 0;
 
 SHUSlice test1(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 {
     while (true)
     {
-        counter += 1;
-        SHU_LogInfo("Task 1 increments counter by 1 : %zu", counter);
+        SHU_AtomicAdd(&counter, 1);
 
-        if (counter > COUNTER_LIMIT)
+        usz temp = SHU_AtomicRead(&counter);
+        SHU_LogInfo("Task 1 increments counter by 1 : %zu", temp);
+
+        if (temp > COUNTER_LIMIT)
         {
             break;
         }
@@ -27,10 +29,12 @@ SHUSlice test2(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 
     while (true)
     {
-        counter += 2;
-        SHU_LogInfo("Task 2 increments counter by 2 : %zu", counter);
+        SHU_AtomicAdd(&counter, 2);
 
-        if (counter > COUNTER_LIMIT)
+        usz temp = SHU_AtomicRead(&counter);
+        SHU_LogInfo("Task 2 increments counter by 2 : %zu", temp);
+
+        if (temp > COUNTER_LIMIT)
         {
             break;
         }

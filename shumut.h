@@ -122,7 +122,7 @@ void SHU_AtomicWrite(_Atomic usz *atomicVariable, usz writeValue);
 /// @param atomicVariable Variable to sum atomically.
 /// @param valueToSum Value to sum to variable.
 /// @return The old value before summation operation
-usz SHU_AtomicSum(_Atomic usz *atomicVariable, usz sumValue);
+usz SHU_AtomicAdd(_Atomic usz *atomicVariable, usz sumValue);
 
 #pragma endregion Declarations
 
@@ -166,6 +166,7 @@ typedef struct SHUI_Thread
     _Atomic SHUISignal signals;
     SHUTask headTask;
     SHUTask tailTask;
+    SHULock taskListLock;
 } SHUI_Thread;
 
 typedef struct SHUI_Task
@@ -319,15 +320,19 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
             SHUMUT.currentTask = thread->headTask;
         }
 
+        SHU_LockWait(thread->taskListLock);
         SHUTask next = SHUMUT.currentTask->next;
+        SHU_LockRelease(thread->taskListLock);
 
         switch (SHU_AtomicRead((_Atomic usz *)&SHUMUT.currentTask->signals))
         {
         case SHUISignal_Destroyed:
         case SHUISignal_Finished:
+            SHU_LockWait(thread->taskListLock);
             SHUI_TaskUnlink(thread, SHUMUT.currentTask);
+            SHU_LockRelease(thread->taskListLock);
 #ifdef _WIN32
-            DeleteFiber(SHUMUT.currentTask->context);
+            // DeleteFiber(SHUMUT.currentTask->context);
 #endif
             free(SHUMUT.currentTask);
             break;
@@ -526,11 +531,13 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUE
     }
     else // append
     {
+        SHU_LockWait(thread->taskListLock);
         task->previous = thread->tailTask;
         task->next = thread->headTask;
         thread->tailTask->next = task;
         thread->headTask->previous = task;
         thread->tailTask = task;
+        SHU_LockRelease(thread->taskListLock);
     }
 
     *retTask = task;
@@ -646,7 +653,7 @@ void SHU_AtomicWrite(_Atomic usz *atomicVariable, usz writeValue)
     atomic_store_explicit(atomicVariable, writeValue, memory_order_release);
 }
 
-usz SHU_AtomicSum(_Atomic usz *atomicVariable, usz sumValue)
+usz SHU_AtomicAdd(_Atomic usz *atomicVariable, usz sumValue)
 {
     if (sumValue == 0)
     {

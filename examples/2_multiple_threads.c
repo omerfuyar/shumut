@@ -10,7 +10,7 @@ SHUSlice test(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 {
     usz threadID = argument.size;
     SHU_LogInfo("task function %zu executing", threadID);
-    SHU_AtomicSum(&counter, 1);
+    SHU_AtomicAdd(&counter, 1);
     return cs((void *)threadNames[threadID % 4], threadID);
 }
 
