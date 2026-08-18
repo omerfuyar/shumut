@@ -408,7 +408,7 @@ SHUThread SHU_ThreadGetCurrent(void)
 
 SHUResult SHU_ThreadCreate(SHUThread *retThread)
 {
-    SHU_CheckPanicNullPointer(retThread);
+    SHU_AssertNullPointer(retThread);
 
     SHUThread thread = (SHUThread)malloc(sizeof(SHUI_Thread));
     if (thread == NULL)
@@ -439,7 +439,7 @@ void SHU_ThreadSleep(u64 milliseconds)
 
 SHUResult SHU_ThreadDestroy(SHUThread thread)
 {
-    SHU_CheckPanicNullPointer(thread);
+    SHU_AssertNullPointer(thread);
 
     SHU_AtomicWrite((_Atomic usz *)&thread->signals, SHUISignal_Destroyed);
 
@@ -478,7 +478,7 @@ SHUResult SHU_ThreadDestroy(SHUThread thread)
 
 void SHU_ThreadClear(SHUThread thread)
 {
-    SHU_CheckPanicNullPointer(thread);
+    SHU_AssertNullPointer(thread);
 
     while (thread->headTask != NULL)
     {
@@ -493,9 +493,9 @@ SHUTask SHU_TaskGetCurrent(void)
 
 SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUExecutionFunction function, SHUSlice argument, SHUSlice *retReturnAddress)
 {
-    SHU_CheckPanicNullPointer(retTask);
-    SHU_CheckPanicNullPointer(thread);
-    SHU_CheckPanicNullPointer(function);
+    SHU_AssertNullPointer(retTask);
+    SHU_AssertNullPointer(thread);
+    SHU_AssertNullPointer(function);
 
     stackSize = stackSize == 0 ? SHUC_DEFAULT_TASK_STACK_CAPACITY : stackSize;
 
@@ -546,7 +546,7 @@ SHUResult SHU_TaskCreate(SHUTask *retTask, SHUThread thread, usz stackSize, SHUE
 
 void SHU_TaskDestroy(SHUThread thread, SHUTask task)
 {
-    SHU_CheckPanicNullPointer(task);
+    SHU_AssertNullPointer(task);
 
     SHUI_TaskUnlink(thread, task);
 #ifdef _WIN32
@@ -557,7 +557,7 @@ void SHU_TaskDestroy(SHUThread thread, SHUTask task)
 
 void SHU_TaskYield(SHUTask task, u64 milliseconds)
 {
-    SHU_CheckPanicNullPointer(task);
+    SHU_AssertNullPointer(task);
 
     if (milliseconds > 0)
     {
@@ -574,7 +574,7 @@ void SHU_TaskYield(SHUTask task, u64 milliseconds)
 
 SHUResult SHU_LockCreate(SHULock *retLock)
 {
-    SHU_CheckPanicNullPointer(retLock);
+    SHU_AssertNullPointer(retLock);
 
     SHULock lock = (SHULock)malloc(sizeof(SHUI_Lock));
     if (lock == NULL)
@@ -599,7 +599,7 @@ SHUResult SHU_LockCreate(SHULock *retLock)
 
 void SHU_LockDestroy(SHULock lock)
 {
-    SHU_CheckPanicNullPointer(lock);
+    SHU_AssertNullPointer(lock);
 
 #ifdef _WIN32
     DeleteCriticalSection(&lock->mutex);
@@ -612,7 +612,7 @@ void SHU_LockDestroy(SHULock lock)
 
 bool SHU_LockTry(SHULock lock)
 {
-    SHU_CheckPanicNullPointer(lock);
+    SHU_AssertNullPointer(lock);
 
 #ifdef _WIN32
     return TryEnterCriticalSection(&lock->mutex);
@@ -623,7 +623,7 @@ bool SHU_LockTry(SHULock lock)
 
 void SHU_LockWait(SHULock lock)
 {
-    SHU_CheckPanicNullPointer(lock);
+    SHU_AssertNullPointer(lock);
 
 #ifdef _WIN32
     EnterCriticalSection(&lock->mutex);
@@ -634,7 +634,7 @@ void SHU_LockWait(SHULock lock)
 
 void SHU_LockRelease(SHULock lock)
 {
-    SHU_CheckPanicNullPointer(lock);
+    SHU_AssertNullPointer(lock);
 
 #ifdef _WIN32
     LeaveCriticalSection(&lock->mutex);
