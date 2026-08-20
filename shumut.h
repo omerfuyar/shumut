@@ -44,7 +44,6 @@ SHUResult SHU_ThreadCreate(SHUThread *retThread);
 SHUResult SHU_ThreadDestroy(SHUThread thread);
 
 /// @brief Puts the current thread to sleep for specified time.
-/// @param thread Thread to sleep.
 /// @param milliseconds Milliseconds to sleep for.
 void SHU_ThreadSleep(u64 milliseconds);
 
