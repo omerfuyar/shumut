@@ -136,23 +136,23 @@ usz SHU_AtomicSum(_Atomic usz *atomicVariable, usz sumValue);
 
 #ifdef _WIN32
 #include <windows.h>
-typedef LPVOID SHUIContext;
+typedef LPVOID SHUI_Context;
 #else
 #include <unistd.h>
 #include <pthread.h>
 #include <ucontext.h>
-typedef ucontext_t SHUIContext;
+typedef ucontext_t SHUI_Context;
 #endif
 
 #pragma region Internals
 
-typedef enum SHUISignal
+typedef enum SHUI_Signal
 {
-    SHUISignal_None = 0 << 0,
-    SHUISignal_Destroyed = 1 << 0,
-    SHUISignal_Finished = 1 << 1,
-    SHUISignal_Sleeping = 1 << 2,
-} SHUISignal;
+    SHUI_Signal_None = 0 << 0,
+    SHUI_Signal_Destroyed = 1 << 0,
+    SHUI_Signal_Finished = 1 << 1,
+    SHUI_Signal_Sleeping = 1 << 2,
+} SHUI_Signal;
 
 typedef struct SHUI_Thread
 {
@@ -161,8 +161,8 @@ typedef struct SHUI_Thread
 #else
     pthread_t handle;
 #endif
-    SHUIContext context;
-    _Atomic SHUISignal signals;
+    SHUI_Context context;
+    _Atomic SHUI_Signal signals;
     SHUTask headTask;
     SHUTask tailTask;
     SHULock taskListLock;
@@ -171,8 +171,8 @@ typedef struct SHUI_Thread
 typedef struct SHUI_Task
 {
     // header
-    SHUIContext context;
-    _Atomic SHUISignal signals;
+    SHUI_Context context;
+    _Atomic SHUI_Signal signals;
     SHUTask next;
     SHUTask previous;
     SHUExecutionFunction function;
@@ -209,7 +209,7 @@ static u64 SHUI_GetMilliseconds(void)
 #endif
 }
 
-static void SHUI_JumpToContext(SHUIContext *fromContext, SHUIContext *toContext)
+static void SHUI_JumpToContext(SHUI_Context *fromContext, SHUI_Context *toContext)
 {
 #ifdef _WIN32
     SwitchToFiber(*toContext);
@@ -263,11 +263,11 @@ static void SHUI_TaskFunctionWrap(int upper, int lower)
         *task->returnAddress = result;
     }
 
-    SHU_AtomicWrite((_Atomic usz *)&task->signals, SHUISignal_Finished);
+    SHU_AtomicWrite((_Atomic usz *)&task->signals, SHUI_Signal_Finished);
     SHUI_JumpToContext(&task->context, &SHUMUT.currentThread->context);
 }
 
-static void SHUI_CreateContext(SHUIContext *retContext, SHUTask task)
+static void SHUI_CreateContext(SHUI_Context *retContext, SHUTask task)
 {
 #ifdef _WIN32
     *retContext = CreateFiber(task->stackSize, SHUI_TaskFunctionWrap, task);
@@ -308,7 +308,7 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
                "Setting up the thread %p failed.", thread->handle);
 #endif
 
-    while (SHU_AtomicRead((_Atomic usz *)&thread->signals) == SHUISignal_None)
+    while (SHU_AtomicRead((_Atomic usz *)&thread->signals) == SHUI_Signal_None)
     {
         if (SHUMUT.currentTask == NULL)
         {
@@ -325,8 +325,8 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
 
         switch (SHU_AtomicRead((_Atomic usz *)&SHUMUT.currentTask->signals))
         {
-        case SHUISignal_Destroyed:
-        case SHUISignal_Finished:
+        case SHUI_Signal_Destroyed:
+        case SHUI_Signal_Finished:
             SHU_LockWait(thread->taskListLock);
             SHUI_TaskUnlink(thread, SHUMUT.currentTask);
             SHU_LockRelease(thread->taskListLock);
@@ -335,14 +335,14 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
 #endif
             free(SHUMUT.currentTask);
             break;
-        case SHUISignal_Sleeping:
+        case SHUI_Signal_Sleeping:
             if (SHUMUT.currentTask->wakeAt != 0 &&
                 SHUI_GetMilliseconds() < SHUMUT.currentTask->wakeAt)
             {
                 break;
             }
             SHUMUT.currentTask->wakeAt = 0;
-            SHUMUT.currentTask->signals = SHUISignal_None;
+            SHUMUT.currentTask->signals = SHUI_Signal_None;
         default:
 
             SHUI_JumpToContext(&thread->context, &SHUMUT.currentTask->context);
@@ -440,7 +440,7 @@ SHUResult SHU_ThreadDestroy(SHUThread thread)
 {
     SHU_AssertNullPointer(thread);
 
-    SHU_AtomicWrite((_Atomic usz *)&thread->signals, SHUISignal_Destroyed);
+    SHU_AtomicWrite((_Atomic usz *)&thread->signals, SHUI_Signal_Destroyed);
 
 #ifdef _WIN32
     if (!TerminateThread(thread->handle, 0))
@@ -561,7 +561,7 @@ void SHU_TaskYield(SHUTask task, u64 milliseconds)
     if (milliseconds > 0)
     {
         task->wakeAt = SHUI_GetMilliseconds() + (u64)milliseconds;
-        task->signals = SHUISignal_Sleeping;
+        task->signals = SHUI_Signal_Sleeping;
     }
     else
     {
