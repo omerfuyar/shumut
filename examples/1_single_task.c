@@ -18,8 +18,8 @@ int main(int argc, char **argv)
 
     SHU_LogInfo("main thread spawning other");
 
-    SHU_CheckPanic(SHU_ThreadCreate(&thread));
-    SHU_CheckPanic(SHU_TaskCreate(&task, thread, 0, test, cs0, &returnValue));
+    SHU_AssertResult(SHU_ThreadCreate(&thread));
+    SHU_AssertResult(SHU_TaskCreate(&task, thread, 0, test, cs0, &returnValue));
 
     SHU_LogInfo("main thread waiting");
     while (SHU_AtomicRead(&done) == 0)

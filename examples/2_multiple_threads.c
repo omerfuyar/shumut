@@ -23,8 +23,8 @@ int main(int argc, char **argv)
     SHU_LogInfo("main thread spawning others");
     for (usz i = 0; i < THREAD_COUNT; i++)
     {
-        SHU_CheckPanic(SHU_ThreadCreate(&threads[i]));
-        SHU_CheckPanic(SHU_TaskCreate(&tasks[i], threads[i], 0, test, cs(NULL, i), &returnValues[i]));
+        SHU_AssertResult(SHU_ThreadCreate(&threads[i]));
+        SHU_AssertResult(SHU_TaskCreate(&tasks[i], threads[i], 0, test, cs(NULL, i), &returnValues[i]));
     }
 
     SHU_LogInfo("main thread waiting");

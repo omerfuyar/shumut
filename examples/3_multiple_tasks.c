@@ -52,9 +52,9 @@ int main(int argc, char **argv)
     SHUSlice ret1 = {.size = 1}, ret2 = {.size = 1};
 
     SHU_LogInfo("Main thread counter : %zu", SHU_AtomicRead(&counter));
-    SHU_CheckPanic(SHU_ThreadCreate(&thread));
-    SHU_CheckPanic(SHU_TaskCreate(&task1, thread, 0, test1, cs0, &ret1));
-    SHU_CheckPanic(SHU_TaskCreate(&task2, thread, 0, test2, cs0, &ret2));
+    SHU_AssertResult(SHU_ThreadCreate(&thread));
+    SHU_AssertResult(SHU_TaskCreate(&task1, thread, 0, test1, cs0, &ret1));
+    SHU_AssertResult(SHU_TaskCreate(&task2, thread, 0, test2, cs0, &ret2));
 
     SHU_LogInfo("main thread waiting");
 

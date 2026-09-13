@@ -34,8 +34,8 @@ int main(int argc, char **argv)
 
     SHU_LogInfo("Main thread spawning worker thread");
 
-    SHU_CheckPanic(SHU_ThreadCreate(&thread));
-    SHU_CheckPanic(SHU_TaskCreate(&task, thread, 0, test, cs0, &ret));
+    SHU_AssertResult(SHU_ThreadCreate(&thread));
+    SHU_AssertResult(SHU_TaskCreate(&task, thread, 0, test, cs0, &ret));
 
     while (SHU_AtomicRead(&working) == 0)
     {
