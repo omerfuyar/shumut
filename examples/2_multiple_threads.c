@@ -1,4 +1,3 @@
-#define SHU_IMPLEMENTATION
 #include "../shumut.h"
 
 #define THREAD_COUNT 4
@@ -8,13 +7,16 @@ const char *const threadNames[] = {"Abu Bakr", "Umar", "Uthman", "Ali"};
 
 SHUSlice test(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 {
+    (void)thisThread;
+    (void)thisTask;
+
     usz threadID = argument.size;
     SHU_LogInfo("task function %zu executing", threadID);
     SHU_AtomicSum(&counter, 1);
     return cs((void *)threadNames[threadID % 4], threadID);
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
     SHUThread threads[THREAD_COUNT];
     SHUTask tasks[THREAD_COUNT];

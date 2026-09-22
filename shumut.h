@@ -305,7 +305,7 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
     SHU_Assert(thread->context != NULL, "Setting up the thread %p failed.", thread->handle);
 #else
     SHU_Assert(!(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) || pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL)),
-               "Setting up the thread %p failed.", thread->handle);
+               "Setting up the thread %p failed.", (void *)thread->handle);
 #endif
 
     while (SHU_AtomicRead((_Atomic usz *)&thread->signals) == SHUI_Signal_None)
@@ -341,6 +341,7 @@ static void *SHUI_ThreadFunctionWrap(void *parameter)
             {
                 break;
             }
+
             SHUMUT.currentTask->wakeAt = 0;
             SHUMUT.currentTask->signals = SHUI_Signal_None;
         default:

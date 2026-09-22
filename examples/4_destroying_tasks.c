@@ -7,6 +7,10 @@ _Atomic usz working = 0;
 
 SHUSlice test(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 {
+    (void)thisThread;
+    (void)thisTask;
+    (void)argument;
+
     usz counter = 0;
     while (true)
     {
@@ -26,7 +30,7 @@ SHUSlice test(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
     return cs0;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
     SHUThread thread;
     SHUTask task;

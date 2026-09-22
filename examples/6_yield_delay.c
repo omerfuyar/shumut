@@ -1,7 +1,6 @@
-#define SHU_IMPLEMENTATION
 #include "../shumut.h"
 
-int main(int argc, char **argv)
+int main(void)
 {
     return 0;
 }

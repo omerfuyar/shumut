@@ -1,16 +1,19 @@
-#define SHU_IMPLEMENTATION
 #include "../shumut.h"
 
 _Atomic usz done = 0;
 
 SHUSlice test(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 {
+    (void)thisThread;
+    (void)thisTask;
+    (void)argument;
+
     SHU_LogInfo("task function executing");
     SHU_AtomicWrite(&done, 1);
     return cs((void *)0xDEAD, 31);
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
     SHUThread thread;
     SHUTask task;

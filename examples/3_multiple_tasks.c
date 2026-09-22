@@ -1,4 +1,3 @@
-#define SHU_IMPLEMENTATION
 #include "../shumut.h"
 
 #define COUNTER_MIN_LIMIT 31
@@ -6,6 +5,10 @@ _Atomic usz counter = 0;
 
 SHUSlice test1(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 {
+    (void)thisThread;
+    (void)thisTask;
+    (void)argument;
+
     while (true)
     {
         SHU_AtomicSum(&counter, 1);
@@ -26,6 +29,9 @@ SHUSlice test1(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 
 SHUSlice test2(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
 {
+    (void)thisThread;
+    (void)thisTask;
+    (void)argument;
 
     while (true)
     {
@@ -45,7 +51,7 @@ SHUSlice test2(SHUThread thisThread, SHUTask thisTask, SHUSlice argument)
     return cs0;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
     SHUThread thread;
     SHUTask task1, task2;
